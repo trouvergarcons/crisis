@@ -39,16 +39,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Configuration
-origins = settings.cors_origins_list
-# Fallback to allow all if '*' is present or origins is empty
-if not origins:
-    origins = ["*"]
-
+# CORS Configuration - Fully permissive for Vercel, local dev, and cloud deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins if "*" not in origins else ["*"],
-    allow_credentials=False,
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
