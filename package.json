@@ -1,0 +1,19 @@
+{
+  "name": "crisis-command",
+  "version": "1.0.0",
+  "description": "Crisis Command: The Multi-Agent Emergency Response & Resource Coordination Agent",
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "test:backend": "cd backend && .\\venv\\Scripts\\python.exe -m pytest tests -v"
+  },
+  "keywords": [
+    "emergency-response",
+    "langgraph",
+    "multi-agent",
+    "fastapi",
+    "react"
+  ],
+  "author": "Crisis Command Team",
+  "license": "MIT"
+}
