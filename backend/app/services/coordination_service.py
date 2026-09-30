@@ -258,6 +258,76 @@ class CrisisCoordinationService:
             trigger_reason=f"Resource {resource_id} set to unavailable"
         )
 
+    def toggle_resource_status(self, resource_id: str) -> Dict[str, Any]:
+        """Toggles resource status between available and unavailable."""
+        with self._lock:
+            if resource_id not in self.resources:
+                raise KeyError(f"Resource {resource_id} not found.")
+            res = self.resources[resource_id]
+            if res.get("status") == ResourceStatus.UNAVAILABLE.value or not res.get("availability"):
+                res["status"] = ResourceStatus.AVAILABLE.value
+                res["availability"] = True
+                res["assigned_incident_id"] = None
+                self._log_timeline("resource_status", f"Unit {res.get('name', resource_id)} restored to AVAILABLE reserve status.")
+                trigger_reason = f"Resource {resource_id} restored to service"
+            else:
+                res["status"] = ResourceStatus.UNAVAILABLE.value
+                res["availability"] = False
+                prev_inc = res.get("assigned_incident_id")
+                if prev_inc and prev_inc in self.allocations:
+                    if resource_id in self.allocations[prev_inc]:
+                        self.allocations[prev_inc].remove(resource_id)
+                if prev_inc and prev_inc in self.incidents:
+                    if resource_id in self.incidents[prev_inc].get("allocated_resources", []):
+                        self.incidents[prev_inc]["allocated_resources"].remove(resource_id)
+                res["assigned_incident_id"] = None
+                self._log_timeline("resource_status", f"Unit {res.get('name', resource_id)} rotated to MAINTENANCE / UNAVAILABLE.")
+                trigger_reason = f"Resource {resource_id} set to unavailable"
+
+        return self.run_graph(
+            trigger_type="replan",
+            trigger_reason=trigger_reason
+        )
+
+    def direct_dispatch(self, resource_id: str, incident_id: str) -> Dict[str, Any]:
+        """Commander directly authorizes deployment of an apparatus to an active incident."""
+        with self._lock:
+            if resource_id not in self.resources:
+                raise KeyError(f"Resource {resource_id} not found.")
+            if incident_id not in self.incidents:
+                raise KeyError(f"Incident {incident_id} not found.")
+
+            res = self.resources[resource_id]
+            inc = self.incidents[incident_id]
+
+            prev_inc = res.get("assigned_incident_id")
+            if prev_inc and prev_inc in self.allocations and resource_id in self.allocations[prev_inc]:
+                self.allocations[prev_inc].remove(resource_id)
+            if prev_inc and prev_inc in self.incidents and resource_id in self.incidents[prev_inc].get("allocated_resources", []):
+                self.incidents[prev_inc]["allocated_resources"].remove(resource_id)
+
+            res["status"] = ResourceStatus.ASSIGNED.value
+            res["availability"] = False
+            res["assigned_incident_id"] = incident_id
+
+            if incident_id not in self.allocations:
+                self.allocations[incident_id] = []
+            if resource_id not in self.allocations[incident_id]:
+                self.allocations[incident_id].append(resource_id)
+
+            if "allocated_resources" not in inc or inc["allocated_resources"] is None:
+                inc["allocated_resources"] = []
+            if resource_id not in inc["allocated_resources"]:
+                inc["allocated_resources"].append(resource_id)
+
+            self._log_timeline("direct_dispatch", f"Direct Commander Dispatch: {res.get('name', resource_id)} ordered to {inc.get('title', incident_id)}.")
+            self.alerts.insert(0, f"DIRECT DISPATCH: {res.get('name', resource_id)} routed to {inc.get('title')}.")
+
+        return self.run_graph(
+            trigger_type="replan",
+            trigger_reason=f"Direct tactical dispatch of {resource_id} to {incident_id}"
+        )
+
     def resolve_incident(self, incident_id: str) -> Dict[str, Any]:
         """Resolves an incident, frees its resources, and triggers replanning."""
         with self._lock:
@@ -291,9 +361,14 @@ class CrisisCoordinationService:
                 if action_lower == "approve":
                     self.current_plan["approval_status"] = "approved"
                     self.current_plan["human_approval_required"] = False
+                    self.last_replan_event = None
+                    self.alerts = [a for a in self.alerts if "HUMAN APPROVAL REQUIRED" not in a]
                     self._log_timeline("approval", f"Human Commander APPROVED the response plan. Notes: {reviewer_notes or 'None'}")
                 elif action_lower == "reject":
                     self.current_plan["approval_status"] = "rejected"
+                    self.current_plan["human_approval_required"] = False
+                    self.last_replan_event = None
+                    self.alerts = [a for a in self.alerts if "HUMAN APPROVAL REQUIRED" not in a]
                     self._log_timeline("approval", f"Human Commander REJECTED the response plan. Notes: {reviewer_notes or 'Requires manual reallocation.'}")
                 elif action_lower == "review":
                     self.current_plan["approval_status"] = "in_review"
@@ -348,6 +423,179 @@ class CrisisCoordinationService:
                 "alerts": self.alerts[:10],
                 "timeline": list(reversed(self.timeline[-20:]))
             }
+
+    def inject_scenario(self, scenario_type: str) -> Dict[str, Any]:
+        """Injects dynamic multi-hazard disaster scenarios."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        scenario_key = scenario_type.lower()
+
+        if scenario_key == "earthquake":
+            inc_id = f"INC-EQ-{uuid.uuid4().hex[:3].upper()}"
+            incident = {
+                "incident_id": inc_id,
+                "incident_type": IncidentType.BUILDING_COLLAPSE.value,
+                "title": "7.1 Richter Earthquake - Multi-Building Structural Collapse",
+                "description": "Severe seismic shock collapses 2 multi-story structures. Gas leaks detected. Multiple victims pinned under heavy debris.",
+                "location": "Financial District, Market & 1st St",
+                "latitude": 37.7915,
+                "longitude": -122.3995,
+                "severity": 10,
+                "urgency": 10,
+                "people_affected": 85,
+                "estimated_casualties": 28,
+                "required_resources": {"rescue_team": 3, "ambulance": 4, "medical_unit": 2, "fire_unit": 2},
+                "allocated_resources": [],
+                "status": IncidentStatus.REPORTED.value,
+                "priority_score": 96.5,
+                "priority_level": "CRITICAL",
+                "created_at": now_iso,
+                "updated_at": now_iso
+            }
+            trigger_reason = "Catastrophic 7.1 Earthquake - Mass casualty collapse triggered"
+        elif scenario_key == "flood":
+            inc_id = f"INC-FL-{uuid.uuid4().hex[:3].upper()}"
+            incident = {
+                "incident_id": inc_id,
+                "incident_type": IncidentType.FLOOD.value,
+                "title": "Flash Flood & Storm Surge - Transit Basin Inundation",
+                "description": "Rapid water surge inundates subway concourses and lower highway artery. 45 commuters stranded on rooftops and vehicle hoods.",
+                "location": "Mission Creek Basin / SOMA Underpass",
+                "latitude": 37.7710,
+                "longitude": -122.3980,
+                "severity": 8,
+                "urgency": 9,
+                "people_affected": 60,
+                "estimated_casualties": 6,
+                "required_resources": {"rescue_team": 2, "ambulance": 3, "shelter": 1, "police_unit": 2},
+                "allocated_resources": [],
+                "status": IncidentStatus.REPORTED.value,
+                "priority_score": 88.0,
+                "priority_level": "CRITICAL",
+                "created_at": now_iso,
+                "updated_at": now_iso
+            }
+            trigger_reason = "Severe Flash Flood & Inundation - Water extraction teams prioritized"
+        elif scenario_key == "wildfire":
+            inc_id = f"INC-WF-{uuid.uuid4().hex[:3].upper()}"
+            incident = {
+                "incident_id": inc_id,
+                "incident_type": IncidentType.FIRE.value,
+                "title": "Wildland-Urban Interface Fire - Hillside Evacuation Breach",
+                "description": "Wind-driven fire front advancing rapidly toward high-density residential perimeter. Structural defense and mass evacuation underway.",
+                "location": "Twin Peaks North Crest & Panorama Dr",
+                "latitude": 37.7544,
+                "longitude": -122.4477,
+                "severity": 9,
+                "urgency": 9,
+                "people_affected": 120,
+                "estimated_casualties": 8,
+                "required_resources": {"fire_unit": 4, "police_unit": 3, "ambulance": 2, "shelter": 1},
+                "allocated_resources": [],
+                "status": IncidentStatus.REPORTED.value,
+                "priority_score": 93.0,
+                "priority_level": "CRITICAL",
+                "created_at": now_iso,
+                "updated_at": now_iso
+            }
+            trigger_reason = "Wildland Interface Fire Surge - Life-safety containment mobilized"
+        elif scenario_key == "blackout":
+            inc_id = f"INC-PW-{uuid.uuid4().hex[:3].upper()}"
+            incident = {
+                "incident_id": inc_id,
+                "incident_type": IncidentType.OTHER.value,
+                "title": "Regional Grid Collapse & Hospital Generator Failure",
+                "description": "Substation explosion cuts auxiliary power to regional clinic. ICU patient life-support running on limited battery reserves.",
+                "location": "Metro Community Hospital, Sector 6",
+                "latitude": 37.7850,
+                "longitude": -122.4350,
+                "severity": 9,
+                "urgency": 10,
+                "people_affected": 40,
+                "estimated_casualties": 12,
+                "required_resources": {"medical_unit": 2, "ambulance": 4, "rescue_team": 1},
+                "allocated_resources": [],
+                "status": IncidentStatus.REPORTED.value,
+                "priority_score": 94.5,
+                "priority_level": "CRITICAL",
+                "created_at": now_iso,
+                "updated_at": now_iso
+            }
+            trigger_reason = "Grid Blackout Life-Support Crisis - Mobile medical intervention required"
+        else:
+            return self.trigger_chemical_explosion_demo()
+
+        with self._lock:
+            self.incidents[inc_id] = incident
+            self.allocations[inc_id] = []
+            self._log_timeline("disaster_scenario", f"🚨 DISASTER SCENARIO INJECTED: {incident['title']}")
+            self.alerts.insert(0, f"SCENARIO ALERT: {incident['title']} injected into emergency grid.")
+
+        return self.run_graph(
+            trigger_type="new_incident",
+            current_incident_id=inc_id,
+            trigger_reason=trigger_reason
+        )
+
+    def process_tactical_command(self, query: str) -> Dict[str, Any]:
+        """Interprets natural language commands and executes tactical agent actions."""
+        q = query.lower().strip()
+
+        with self._lock:
+            active_count = sum(1 for i in self.incidents.values() if i.get("status") not in ["resolved", "contained"])
+            avail_amb = sum(1 for r in self.resources.values() if r.get("resource_type") == "ambulance" and r.get("status") == ResourceStatus.AVAILABLE.value)
+            avail_fire = sum(1 for r in self.resources.values() if r.get("resource_type") == "fire_unit" and r.get("status") == ResourceStatus.AVAILABLE.value)
+            avail_rescue = sum(1 for r in self.resources.values() if r.get("resource_type") == "rescue_team" and r.get("status") == ResourceStatus.AVAILABLE.value)
+            avail_police = sum(1 for r in self.resources.values() if r.get("resource_type") == "police_unit" and r.get("status") == ResourceStatus.AVAILABLE.value)
+
+        # 1. Replan query
+        if any(w in q for w in ["replan", "reallocate", "optimize", "redistribute"]):
+            self.run_graph(trigger_type="replan", trigger_reason=f"Commander voice/AI request: '{query}'")
+            return {
+                "reply": f"Tactical Replan executed across all sectors. {active_count} active emergencies re-evaluated.",
+                "action": "replan_triggered"
+            }
+
+        # 2. Approve query
+        if any(w in q for w in ["approve", "authorize", "confirm plan", "accept plan"]):
+            self.handle_human_approval("approve", "Approved via Tactical AI Command")
+            return {
+                "reply": "Tactical Response Plan has been officially APPROVED by Commander authorization.",
+                "action": "approval_granted"
+            }
+
+        # 3. Fleet readiness queries
+        if any(w in q for w in ["ambulance", "medic", "ems"]):
+            return {
+                "reply": f"Medical Fleet Readiness: {avail_amb} ambulances available in ready reserve. Mobile trauma capacity operational.",
+                "action": "status_check"
+            }
+        if any(w in q for w in ["fire", "engine", "hazmat"]):
+            return {
+                "reply": f"Fire & HazMat Readiness: {avail_fire} fire apparatus ready for dispatch across stations.",
+                "action": "status_check"
+            }
+        if any(w in q for w in ["rescue", "sar", "extraction"]):
+            return {
+                "reply": f"Search & Rescue Readiness: {avail_rescue} tactical extraction teams standing by.",
+                "action": "status_check"
+            }
+
+        # 4. Casualty or priority inquiry
+        if any(w in q for w in ["casualty", "casualties", "worst", "critical", "highest priority"]):
+            active_list = [i for i in self.incidents.values() if i.get("status") not in ["resolved", "contained"]]
+            if active_list:
+                worst = max(active_list, key=lambda x: (x.get("priority_score", 0), x.get("estimated_casualties", 0)))
+                return {
+                    "reply": f"Highest Priority Incident: '{worst.get('title')}' at {worst.get('location')} (Priority: {worst.get('priority_score', 0):.1f}, Casualties: {worst.get('estimated_casualties')}).",
+                    "action": "incident_focus",
+                    "incident_id": worst.get("incident_id")
+                }
+
+        # 5. General status overview
+        return {
+            "reply": f"Tactical Status: {active_count} active incidents across defense grid. Reserves: {avail_amb} ambulances, {avail_fire} fire units, {avail_rescue} rescue teams, {avail_police} police units ready.",
+            "action": "status_overview"
+        }
 
     def _log_timeline(self, event_type: str, message: str) -> None:
         now_str = datetime.now(timezone.utc).strftime("%H:%M:%S")

@@ -168,3 +168,19 @@ export interface DashboardData {
   alerts: string[];
   timeline: TimelineItem[];
 }
+
+export type Department = 'all' | 'fire' | 'medical' | 'rescue' | 'police';
+
+export type UserRole = 'super_admin' | 'dept_admin' | 'operator';
+
+export interface UserSession {
+  username: string;
+  displayName: string;
+  role: UserRole;
+  department: Department;
+  departmentName: string;
+  badgeNumber: string;
+  token?: string;
+  agencyIcon?: string;
+}
+

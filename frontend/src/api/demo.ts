@@ -38,4 +38,27 @@ export const demoApi = {
     }>('/api/demo/resource-failure', {
       method: 'POST',
     }),
+
+  injectScenario: (scenarioName: string) =>
+    apiClient<{
+      status: string;
+      message: string;
+      scenario: string;
+      replanning_event: ReplanEvent;
+      response_plan: ResponsePlan;
+      human_approval_required: boolean;
+    }>(`/api/demo/scenario/${scenarioName}`, {
+      method: 'POST',
+    }),
+
+  sendCommand: (query: string) =>
+    apiClient<{
+      status: string;
+      reply: string;
+      action?: string;
+      incident_id?: string;
+    }>('/api/demo/command', {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    }),
 };

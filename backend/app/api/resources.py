@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from typing import List, Dict, Any
 from backend.app.services.resource_service import resource_service
 
@@ -28,6 +29,42 @@ def mark_resource_unavailable(resource_id: str):
         return {
             "status": "success",
             "message": f"Resource {resource_id} set to UNAVAILABLE. Replanning triggered.",
+            "resource": resource_service.get_resource(resource_id)
+        }
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{resource_id}/toggle-status", response_model=Dict[str, Any])
+def toggle_resource_status(resource_id: str):
+    """Toggle a resource between available and unavailable/maintenance."""
+    try:
+        resource_service.toggle_status(resource_id)
+        return {
+            "status": "success",
+            "message": f"Resource {resource_id} status toggled.",
+            "resource": resource_service.get_resource(resource_id)
+        }
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class DispatchRequest(BaseModel):
+    incident_id: str
+
+
+@router.post("/{resource_id}/dispatch", response_model=Dict[str, Any])
+def dispatch_resource(resource_id: str, payload: DispatchRequest):
+    """Directly dispatch an apparatus to an active emergency scene."""
+    try:
+        resource_service.dispatch(resource_id, payload.incident_id)
+        return {
+            "status": "success",
+            "message": f"Resource {resource_id} dispatched to incident {payload.incident_id}.",
             "resource": resource_service.get_resource(resource_id)
         }
     except KeyError as e:

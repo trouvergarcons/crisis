@@ -16,7 +16,7 @@ export const responseApi = {
       response_plan: ResponsePlan;
       replanning_event: ReplanEvent;
       changes: AllocationChange[];
-    }>('/api/replan', {
+    }>('/api/response/replan', {
       method: 'POST',
       body: JSON.stringify({ reason: reason || 'Tactical Replan from UI' }),
     }),

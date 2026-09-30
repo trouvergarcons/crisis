@@ -11,4 +11,19 @@ export const resourcesApi = {
       `/api/resources/${id}/unavailable`,
       { method: 'POST' }
     ),
+
+  toggleStatus: (id: string) =>
+    apiClient<{ status: string; message: string; resource: Resource }>(
+      `/api/resources/${id}/toggle-status`,
+      { method: 'POST' }
+    ),
+
+  dispatch: (resourceId: string, incidentId: string) =>
+    apiClient<{ status: string; message: string; resource: Resource }>(
+      `/api/resources/${resourceId}/dispatch`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ incident_id: incidentId }),
+      }
+    ),
 };

@@ -12,5 +12,11 @@ class ResourceService:
     def mark_unavailable(self, resource_id: str) -> Dict[str, Any]:
         return coordination_service.mark_resource_unavailable(resource_id)
 
+    def toggle_status(self, resource_id: str) -> Dict[str, Any]:
+        return coordination_service.toggle_resource_status(resource_id)
+
+    def dispatch(self, resource_id: str, incident_id: str) -> Dict[str, Any]:
+        return coordination_service.direct_dispatch(resource_id, incident_id)
+
 
 resource_service = ResourceService()

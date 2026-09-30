@@ -7,9 +7,11 @@ import {
   Eye, 
   ShieldCheck, 
   Clock, 
-  Info 
+  Info,
+  X 
 } from 'lucide-react';
 import { ReplanEvent } from '../types';
+import { tacticalAudio } from '../utils/audio';
 
 interface ReplanningBannerProps {
   replanEvent: ReplanEvent | null;
@@ -25,16 +27,39 @@ export const ReplanningBanner: React.FC<ReplanningBannerProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notes, setNotes] = useState('');
   const [showNotesInput, setShowNotesInput] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
+  const [lastSeenEventId, setLastSeenEventId] = useState<string | null>(null);
 
-  if (!replanEvent) {
+  // If a new replan event arrives, reset dismissal state
+  const currentEventId = replanEvent ? `${replanEvent.timestamp || ''}_${replanEvent.reason || ''}` : null;
+  if (currentEventId && currentEventId !== lastSeenEventId) {
+    setLastSeenEventId(currentEventId);
+    setIsDismissed(false);
+  }
+
+  // If no active replan event, or if plan is already approved, or dismissed by user: DO NOT RENDER
+  if (!replanEvent || approvalStatus === 'approved' || isDismissed) {
     return null;
   }
 
   const handleAction = async (action: 'approve' | 'reject' | 'review') => {
     setIsSubmitting(true);
+    // Instantly dismiss visually so the commander experiences zero lag
+    if (action === 'approve') {
+      setIsDismissed(true);
+      tacticalAudio.playDispatchChime();
+      tacticalAudio.speak('Response plan approved by Commander. Fleet units mobilizing.');
+    } else if (action === 'reject') {
+      setIsDismissed(true);
+      tacticalAudio.playWarningSiren();
+      tacticalAudio.speak('Response plan rejected.');
+    }
+
     try {
       await onApproval(action, notes);
       setShowNotesInput(false);
+    } catch (err) {
+      console.error('Approval action error:', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -44,7 +69,7 @@ export const ReplanningBanner: React.FC<ReplanningBannerProps> = ({
   const isRejected = approvalStatus === 'rejected';
 
   return (
-    <div className="mb-6 rounded-xl border border-red-500/50 bg-gradient-to-r from-red-950/80 via-slate-900 to-red-950/80 p-5 shadow-2xl shadow-red-950/50">
+    <div className="mb-6 rounded-xl border border-red-500/50 bg-gradient-to-r from-red-950/80 via-slate-900 to-red-950/80 p-5 shadow-2xl shadow-red-950/50 relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-red-500/30 pb-3.5">
         <div className="flex items-center space-x-3">
@@ -66,7 +91,7 @@ export const ReplanningBanner: React.FC<ReplanningBannerProps> = ({
           </div>
         </div>
 
-        {/* Status indicator */}
+        {/* Status indicator and Close Dismiss button */}
         <div className="flex items-center space-x-2">
           {isApproved ? (
             <span className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
@@ -84,6 +109,14 @@ export const ReplanningBanner: React.FC<ReplanningBannerProps> = ({
               <span>HUMAN APPROVAL REQUIRED</span>
             </span>
           )}
+
+          <button
+            onClick={() => setIsDismissed(true)}
+            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 border border-transparent hover:border-slate-700 transition"
+            title="Dismiss Replan Notification"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
 

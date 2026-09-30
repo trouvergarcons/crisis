@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from typing import Dict, Any
 from backend.app.services.coordination_service import coordination_service
 
@@ -69,6 +70,47 @@ def simulate_resource_failure():
             "message": "Resource failure simulated. Unit taken offline and replacement replanning executed.",
             "replanning_event": coordination_service.last_replan_event,
             "response_plan": coordination_service.current_plan
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/scenario/{scenario_name}", response_model=Dict[str, Any])
+def inject_disaster_scenario(scenario_name: str):
+    """
+    Multi-Hazard Scenario Injector:
+    Injects custom extreme disaster scenarios (earthquake, flood, wildfire, blackout, chemical)
+    and executes dynamic multi-agent LangGraph replanning.
+    """
+    try:
+        res = coordination_service.inject_scenario(scenario_name)
+        return {
+            "status": "success",
+            "message": f"Scenario '{scenario_name}' injected. Dynamic multi-agent reallocation complete.",
+            "scenario": scenario_name,
+            "replanning_event": coordination_service.last_replan_event,
+            "response_plan": coordination_service.current_plan,
+            "human_approval_required": coordination_service.current_plan.get("human_approval_required", False) if coordination_service.current_plan else False
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CommandPayload(BaseModel):
+    query: str
+
+
+@router.post("/command", response_model=Dict[str, Any])
+def process_tactical_command(payload: CommandPayload):
+    """
+    Natural Language AI Radio / Command Dispatch Bar:
+    Processes commander queries, status checks, and direct voice/text action orders.
+    """
+    try:
+        result = coordination_service.process_tactical_command(payload.query)
+        return {
+            "status": "success",
+            **result
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

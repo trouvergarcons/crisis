@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -48,7 +48,7 @@ if not origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins if "*" not in origins else ["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -59,6 +59,13 @@ app.include_router(resources_router)
 app.include_router(response_router)
 app.include_router(dashboard_router)
 app.include_router(demo_router)
+
+# Alias for replan endpoint
+@app.post("/api/replan", tags=["Response Plan"], include_in_schema=False)
+def replan_alias():
+    from backend.app.api.response import trigger_replan
+    return trigger_replan()
+
 
 
 @app.get("/health", tags=["System"])
@@ -74,11 +81,31 @@ def health_check():
     }
 
 
-@app.get("/", tags=["System"])
-def root():
-    return {
-        "message": "Crisis Command: The Multi-Agent Emergency Response & Resource Coordination Agent",
-        "documentation": "/docs",
-        "health": "/health",
-        "status": "OPERATIONAL"
-    }
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str = ""):
+        # Don't hijack API or docs routes
+        if full_path.startswith(("api", "health", "docs", "redoc", "openapi.json")):
+            raise HTTPException(status_code=404, detail="Not Found")
+        target_file = FRONTEND_DIST / full_path
+        if full_path and target_file.is_file():
+            return FileResponse(str(target_file))
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+else:
+    @app.get("/", tags=["System"])
+    def root():
+        return {
+            "message": "Crisis Command: The Multi-Agent Emergency Response & Resource Coordination Agent",
+            "documentation": "/docs",
+            "health": "/health",
+            "status": "OPERATIONAL"
+        }
+
